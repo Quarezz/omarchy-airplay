@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import ipaddress,json,os,re,selectors,stat,subprocess,sys,time
+import ipaddress,json,os,re,selectors,signal,stat,subprocess,sys,time
 MAX=65536; NAMES=96; IDS=re.compile(r"^[0-9A-Fa-f:]{2,64}$")
 def die(s,c=2): print(s,file=sys.stderr); raise SystemExit(c)
 def dfd(name,create=False):
@@ -40,6 +40,65 @@ def creds():
   return v
  except (UnicodeDecodeError,json.JSONDecodeError):die("Invalid DoubleTake credentials")
  finally:os.close(d)
+def load_paired(d):
+ rows=[]
+ for line in (read(d,"paired.tsv",8192) or b"").decode("utf-8","strict").splitlines():
+  f=line.split("\t")
+  if len(f)<3 or not IDS.fullmatch(f[2]):continue
+  try:rows.append((clean(f[0],NAMES) or f[1],str(ipaddress.IPv4Address(f[1])),f[2]))
+  except ValueError:continue
+ return rows
+def save_paired(d,rows):
+ out=[];seen=set()
+ for name,addr,i in rows:
+  if i in seen:continue
+  seen.add(i);out.append(f"{name}\t{addr}\t{i}")
+  if len(out)==32:break
+ write(d,"paired.tsv",("\n".join(out)+("\n" if out else "")).encode())
+def remember(name,addr,device_id):
+ if not device_id or not IDS.fullmatch(device_id):return
+ try:a=str(ipaddress.IPv4Address(addr))
+ except ValueError:return
+ d=dfd("omarchy-airplay",True)
+ try:
+  rows=[(n,ad,i) for n,ad,i in load_paired(d) if i!=device_id]
+  rows.insert(0,(clean(name,NAMES) or a,a,device_id));save_paired(d,rows)
+ finally:os.close(d)
+def unremember(device_id):
+ try:d=dfd("omarchy-airplay")
+ except FileNotFoundError:return
+ try:save_paired(d,[(n,a,i) for n,a,i in load_paired(d) if i!=device_id])
+ finally:os.close(d)
+def paired_list():
+ try:d=dfd("omarchy-airplay",True)
+ except FileNotFoundError:return
+ try:
+  rows=load_paired(d); z=read(d,"target.tsv",4096)
+  if z:
+   f=z.decode("utf-8","replace").strip().split("\t")
+   if len(f)>=3 and IDS.fullmatch(f[2]):
+    try:
+     addr=str(ipaddress.IPv4Address(f[1])); name=clean(f[0],NAMES) or addr
+     if f[2] not in [i for _,_,i in rows]:
+      rows.insert(0,(name,addr,f[2])); save_paired(d,rows)
+    except ValueError:pass
+  c=creds(); n=0
+  for name,addr,i in rows:
+   if i not in c:continue
+   print(f"{name}\t{addr}\t{i}\t1"); n+=1
+   if n==32:return
+ finally:os.close(d)
+def discovery_flag(q,a):
+ try:d=dfd("omarchy-airplay",q=="discovery-set")
+ except FileNotFoundError:
+  if q=="discovery-get":print("0");return
+  die("Unsafe state directory")
+ try:
+  if q=="discovery-get":
+   z=read(d,"discovery.enabled",8); print("1" if z and z.strip()==b"1" else "0"); return
+  if len(a)!=1 or a[0] not in ("0","1"):die("Invalid discovery flag")
+  write(d,"discovery.enabled",(a[0]+"\n").encode())
+ finally:os.close(d)
 def discovery():
  try:p=subprocess.Popen(["avahi-browse","--resolve","--terminate","--parsable","_airplay._tcp"],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
  except FileNotFoundError:die("avahi-browse is required",127)
@@ -63,8 +122,9 @@ def discovery():
   except ValueError:continue
   if a in seen:continue
   name=clean(re.sub(r"\\(\d{3})",lambda m:chr(int(m.group(1))),f[3]),NAMES) or a
-  m=re.search(r"(?:^|,)deviceid=([0-9A-Fa-f:]+)",f[9]); i=m.group(1) if m and IDS.fullmatch(m.group(1)) else ""
+  m=re.search(r"deviceid=([0-9A-Fa-f:]+)",f[9]); i=m.group(1) if m and IDS.fullmatch(m.group(1)) else ""
   print(f"{name}\t{a}\t{i}\t{int(i in c)}");seen.add(a)
+  if i:remember(name,a,i)
   if len(seen)==32:return
 def firewall(q,a):
  if not a or not IDS.fullmatch(a[0]):die("Invalid device ID")
@@ -89,11 +149,45 @@ def network():
  if "dev" not in r:raise SystemExit(1)
  dev=r[r.index("dev")+1]; ip=subprocess.run(["ip","-o","-4","addr","show","dev",dev,"scope","global"],capture_output=True,text=True,timeout=3).stdout.split()
  print("\t".join((clean(dev,32),"","",next((x for x in ip if "/" in x),""),"")))
+def reap(addr):
+ try:target=str(ipaddress.ip_address(addr))
+ except ValueError:die("Invalid target")
+ n=0
+ for name in os.listdir("/proc"):
+  if not name.isdigit():continue
+  try:z=open("/proc/%s/cmdline"%name,"rb").read()
+  except OSError:continue
+  parts=[x.decode("utf-8","replace") for x in z.split(b"\0") if x]
+  if not parts or os.path.basename(parts[0])!="doubletake":continue
+  try:i=parts.index("-target")
+  except ValueError:continue
+  if i+1<len(parts) and parts[i+1]==target:
+   try:os.kill(int(name),signal.SIGTERM);n+=1
+   except OSError:pass
+ print(n)
 def main():
  if len(sys.argv)<2:die("Missing command")
  q,a=sys.argv[1],sys.argv[2:]
  if q=="discover":return discovery()
+ if q=="paired-list":return paired_list()
+ if q in ("discovery-get","discovery-set"):return discovery_flag(q,a)
+ if q=="remember":
+  if len(a)!=3:die("Invalid receiver")
+  remember(a[0],a[1],a[2]);return
  if q=="network":return network()
+ if q=="reap":
+  if len(a)!=1:die("Invalid target")
+  return reap(a[0])
+ if q=="set-restore":
+  if len(a)!=2 or not IDS.fullmatch(a[0]) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,256}",a[1]):die("Invalid restore token")
+  d=dfd("doubletake",True)
+  try:
+   v=creds(); cur=v.get(a[0])
+   if not isinstance(cur,dict):cur={}
+   cur["restore_token"]=a[1]; v[a[0]]=cur
+   write(d,"credentials.json",json.dumps(v,separators=(",",":")).encode())
+  finally:os.close(d)
+  return
  if q in ("firewall-load","firewall-save","firewall-clear"):return firewall(q,a)
  if q in ("load","save","clear"):
   d=dfd("omarchy-airplay",q=="save")
@@ -108,14 +202,16 @@ def main():
     if len(a)not in(2,3):die("Invalid target")
     name=clean(a[0],NAMES);addr=str(ipaddress.ip_address(a[1]));i=a[2] if len(a)==3 and IDS.fullmatch(a[2]) else ""
     write(d,"target.tsv",f"{name}\t{addr}\t{i}\n".encode())
+    if i:remember(name,addr,i)
   finally:os.close(d)
  elif q in ("paired","forget","clear-restore"):
   if len(a)!=1 or not IDS.fullmatch(a[0]):die("Invalid device ID")
   if q=="paired":raise SystemExit(0 if a[0] in creds() else 1)
-  d=dfd("doubletake")
+  d=dfd("doubletake",True)
   try:
    v=creds();v.pop(a[0],None) if q=="forget" else (v.get(a[0],{}).pop("restore_token",None) if isinstance(v.get(a[0]),dict) else None)
    write(d,"credentials.json",json.dumps(v,separators=(",",":")).encode())
   finally:os.close(d)
+  if q=="forget":unremember(a[0])
  else:die("Unknown command")
 if __name__=="__main__":main()

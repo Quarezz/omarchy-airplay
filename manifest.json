@@ -33,7 +33,7 @@
       "targetLatencyMs": 180,
       "portRange": "60000-60010",
       "audio": false,
-      "alwaysPromptForCapture": true
+      "alwaysPromptForCapture": false
     },
     "schema": [
       {
@@ -102,8 +102,8 @@
         "key": "alwaysPromptForCapture",
         "type": "boolean",
         "label": "Choose capture source every time",
-        "defaultValue": true,
-        "description": "Show the portal's screen/window/region picker for every new mirroring session."
+        "defaultValue": false,
+        "description": "Show the portal picker when Start is pressed. The monitor button can change the source at any time."
       }
     ]
   }

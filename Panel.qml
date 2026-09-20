@@ -20,12 +20,11 @@ Panel {
   property bool receiverAvailable: false
   property bool pairingRequired: false
   property bool pairingPromptActive: false
+  property bool discoveryEnabled: false
+  property bool pickingSource: false
   property string discoveryError: ""
   property string streamError: ""
   property bool mirroring: false
-  property string networkDescription: ""
-  property string firewallError: ""
-  property bool firewallManaged: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.45)
@@ -33,6 +32,13 @@ Panel {
   readonly property string localeName: Qt.locale().name
 
   function t(key, values) { return I18n.t(root.localeName, key, values) }
+
+  function heroMeta() {
+    if (root.mirroring) return root.t("mirroringTo", { name: root.selectedName })
+    if (root.pickingSource) return root.t("chooseCapture")
+    if (root.selectedAddress !== "") return root.t("readyFor", { name: root.selectedName })
+    return root.t("chooseReceiver")
+  }
 
   function open() {
     root.controller.show()
@@ -73,10 +79,7 @@ Panel {
 
           PanelHero {
             title: root.t("airplayMirror")
-            meta: root.mirroring
-              ? root.t("mirroringTo", { name: root.selectedName })
-              : (root.selectedAddress === "" ? root.t("chooseReceiver")
-                : (root.receiverAvailable ? root.t("readyFor", { name: root.selectedName }) : root.t("searchingLocalNetwork")))
+            meta: root.heroMeta()
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -90,13 +93,31 @@ Panel {
             }
 
             trailingControl: Component {
-              PanelActionButton {
-                iconText: "󰑐"
-                tooltipText: root.t("discoverReceivers")
-                foreground: root.foreground
-                hoverColor: Color.accent
-                fontFamily: root.fontFamily
-                onClicked: if (root.hostWidget) root.hostWidget.discover()
+              Row {
+                spacing: Style.spacing.sm
+
+                Text {
+                  text: root.t("discovery")
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                ToggleSwitch {
+                  id: discoverySwitch
+                  checked: root.discoveryEnabled
+                  foreground: root.foreground
+                  anchors.verticalCenter: parent.verticalCenter
+                  onToggled: if (root.hostWidget) root.hostWidget.setDiscoveryEnabled(!root.discoveryEnabled)
+
+                  PanelToolTip {
+                    visible: discoverySwitch.containsMouse
+                    text: root.t("discoveryTooltip")
+                    fontFamily: root.fontFamily
+                  }
+                }
               }
             }
           }
@@ -125,7 +146,7 @@ Panel {
             width: parent.width
             text: root.discoveryError
             textFormat: Text.PlainText
-            color: root.discoveryError === root.t("noReceivers") ? root.dim : Color.urgent
+            color: root.discoveryError === root.t("noReceivers") || root.discoveryError === root.t("noPairedReceivers") ? root.dim : Color.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
@@ -222,6 +243,16 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
 
                   PanelActionButton {
+                    iconText: "󰍹"
+                    tooltipText: root.t("chooseSourceTooltip")
+                    foreground: root.foreground
+                    hoverColor: Color.accent
+                    visible: receiverRow.selected && receiverRow.modelData.deviceId !== ""
+                    fontFamily: root.fontFamily
+                    onClicked: if (root.hostWidget) root.hostWidget.chooseSource()
+                  }
+
+                  PanelActionButton {
                     iconText: root.mirroring && receiverRow.selected ? "󰓛" : "󰐨"
                     tooltipText: root.mirroring && receiverRow.selected ? root.t("stopTooltip") : root.t("mirrorTooltip")
                     foreground: root.foreground
@@ -256,55 +287,6 @@ Panel {
             text: root.t("pairNewReceiver")
             foreground: root.foreground
             fontFamily: root.fontFamily
-          }
-
-          PanelSeparator { visible: root.selectedAddress !== "" && root.receiverAvailable; foreground: root.foreground }
-
-          PanelSectionHeader {
-            visible: root.selectedAddress !== "" && root.receiverAvailable
-            text: root.t("networkAndFirewall")
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
-
-          Text {
-            visible: root.selectedAddress !== "" && root.receiverAvailable && root.networkDescription !== ""
-            width: parent.width
-            text: root.t("activeNetwork", { network: root.networkDescription })
-            textFormat: Text.PlainText
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          Text {
-            visible: root.selectedAddress !== "" && root.receiverAvailable
-            width: parent.width
-            text: root.firewallManaged
-              ? root.t("firewallManaged", { address: root.selectedAddress })
-              : root.t("firewallHelp", { address: root.selectedAddress })
-            color: root.firewallManaged ? Color.accent : root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          Text {
-            visible: root.firewallError !== ""
-            width: parent.width
-            text: root.firewallError
-            textFormat: Text.PlainText
-            color: Color.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          Button {
-            visible: root.selectedAddress !== "" && root.receiverAvailable && !root.firewallManaged
-            text: root.t("allowFirewall")
-            onClicked: if (root.hostWidget) root.hostWidget.allowSelectedReceiver()
           }
 
           Text {
@@ -345,7 +327,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: root.t("openReceiverList")
+            text: root.t("sourceHint")
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

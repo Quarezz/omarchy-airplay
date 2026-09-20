@@ -11,12 +11,11 @@ lets you pair, start, stop, or forget a receiver from the Omarchy bar.
 
 ## Features
 
-- Discovers AirPlay receivers through mDNS/Avahi.
+- Lists paired receivers by default; optional Discovery scans mDNS/Avahi.
 - Starts and stops desktop mirroring from the bar.
 - Pairs new receivers with the PIN displayed by the receiver.
 - Lets you select, unselect, and forget individual receivers.
-- Shows the Wayland screen/window/region picker for every new session by
-  default.
+- Has a dedicated capture-source button. Start uses the last screen or window.
 - Supports configurable codec, encoder, FPS, latency, audio, and UDP port
   range settings.
 - Includes English text and Norwegian Bokmål/Nynorsk locale support.
@@ -76,17 +75,11 @@ No manual firewall rule is normally required. DoubleTake uses at least three
 local UDP ports for each active receiver; the plugin defaults to
 `60000-60010`.
 
-When UFW blocks incoming media traffic, select the receiver and choose
-**Allow selected receiver** in the widget. The plugin detects the active
-Wi-Fi/Ethernet network and opens the configured UDP range only for that
-receiver's current IPv4 address. Polkit shows the system administrator prompt
-before anything changes.
-
-The plugin records only rules it created and removes that rule when you choose
-**Forget** for the receiver. This is optional and requires `ufw` and `pkexec`
-(Polkit). If UFW or Polkit is unavailable, configure the firewall according to
-your system's documentation instead; do not open the range to untrusted
-networks.
+When UFW blocks incoming media traffic, allow UDP `60000-60010` from the
+receiver's IPv4 address. The plugin still records rules it created and can
+remove them when you choose **Forget**. If UFW or Polkit is unavailable,
+configure the firewall according to your system's documentation instead; do
+not open the range to untrusted networks.
 
 ## Install
 
@@ -95,7 +88,7 @@ networks.
 After this repository has been published, install the plugin with Omarchy:
 
 ```sh
-omarchy plugin add https://github.com/ETroll/omarchy-airplay.git --enable
+omarchy plugin add https://github.com/Quarezz/omarchy-airplay.git --enable
 omarchy bar move io.github.etroll.omarchy-airplay --section right
 ```
 
@@ -115,7 +108,7 @@ For local development, clone the repository and link it into your user plugin
 directory:
 
 ```sh
-git clone https://github.com/ETroll/omarchy-airplay.git
+git clone https://github.com/Quarezz/omarchy-airplay.git
 cd omarchy-airplay
 ln -s "$PWD" ~/.config/omarchy/plugins/io.github.etroll.omarchy-airplay
 omarchy-shell shell rescanPlugins
@@ -128,23 +121,25 @@ automatically. If the plugin does not appear after a manifest change, run
 
 ## Use
 
-Click the AirPlay icon in the bar to open or close the receiver list. Click a
-receiver row to select it; click that row again to clear the selection. Use the
-screen icon on the right to start or stop mirroring.
+Click the AirPlay icon in the bar to open or close the receiver list. Discovery
+is off by default, so only paired receivers are listed. Turn **Discovery** on
+to scan the network and add a new TV.
 
-For a new receiver, select it and press the screen icon once. Enter the PIN
-shown by the receiver, then choose **Pair & connect**. DoubleTake stores the
-receiver credential in `~/.config/doubletake/credentials.json` for later use.
+Click a receiver row to select it; click that row again to clear the selection.
+Use the monitor icon to choose a screen or window. Use the screen icon to start
+or stop mirroring. Start does not open the picker again.
+
+For a new receiver, turn Discovery on, select it, and press Start once. Enter
+the PIN shown by the receiver, then choose **Pair & connect**. DoubleTake
+stores the receiver credential in `~/.config/doubletake/credentials.json`.
 The PIN field is only shown after a connection has been attempted.
 
 The trash icon is shown only for paired receivers. It removes that receiver's
 saved DoubleTake credential, so the next connection must pair again. It does
 not change the receiver itself.
 
-By default, **Choose capture source every time** is enabled. A new mirroring
-session opens the portal picker so you can choose a screen, window, or region.
-It clears only the saved capture selection for that receiver and keeps its
-AirPlay pairing intact.
+While mirroring, the monitor button still opens the picker first, then
+reconnects with the new source so the TV does not sit on an AirPlay splash.
 
 ## Configure
 
@@ -162,6 +157,7 @@ Useful IPC calls:
 omarchy-shell io.github.etroll.omarchy-airplay status
 omarchy-shell io.github.etroll.omarchy-airplay toggle
 omarchy-shell io.github.etroll.omarchy-airplay discover
+omarchy-shell io.github.etroll.omarchy-airplay pickSource
 omarchy-shell io.github.etroll.omarchy-airplay select "Living Room" 192.168.1.50 AA:BB:CC:DD:EE:FF
 omarchy-shell io.github.etroll.omarchy-airplay unselect
 ```
@@ -189,8 +185,9 @@ required before video can begin.
 ### Mirroring connects but does not update
 
 Try `h264` at 30 FPS, then explicitly select the encoder that matches your GPU
-(`vaapi`, `nvenc`, or software). If UFW is enabled, use **Allow selected
-receiver** for the selected receiver and retry.
+(`vaapi`, `nvenc`, or software). If UFW is enabled, allow UDP `60000-60010`
+from the receiver and retry. Session traces stay in
+`~/.local/state/omarchy-airplay/session.log`.
 
 ### Inspect plugin validation and logs
 
