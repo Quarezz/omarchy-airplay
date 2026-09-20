@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Start a reliable AirPlay mirror: pick a source first, then connect."""
-import argparse, os, re, signal, subprocess, sys, time, uuid
+"""Start an AirPlay mirror. DoubleTake shows the share picker on connect."""
+import argparse, os, re, signal, subprocess, sys, time
 
 CTL = os.path.join(os.path.dirname(os.path.realpath(__file__)), "omarchy-airplay-ctl")
 STATE = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "omarchy-airplay")
 LOG = os.path.join(STATE, "session.log")
-DEST = "org.freedesktop.portal.Desktop"
-PATH = "/org/freedesktop/portal/desktop"
 
 
 def die(msg, code=2):
@@ -15,111 +13,11 @@ def die(msg, code=2):
 
 
 def run(cmd, timeout=30):
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
-
-
-def gdbus_call(obj, method, *args, timeout=30):
-    cmd = ["gdbus", "call", "--session", "--dest", DEST, "--object-path", obj, "--method", method, *args]
-    return run(cmd, timeout=timeout).stdout.strip()
-
-
-def parse_object_path(text):
-    m = re.search(r"'(/org/freedesktop/portal/desktop/[^']+)'", text)
-    if not m:
-        die("portal returned no object path: " + text)
-    return m.group(1)
-
-
-def start_portal_monitor():
-    return subprocess.Popen(
-        ["dbus-monitor", "--session", "type='signal',interface='org.freedesktop.portal.Request',member='Response'"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-    )
-
-
-def wait_portal_response(mon, request_path, timeout):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        line = mon.stdout.readline()
-        if not line:
-            break
-        if request_path not in line or "member=Response" not in line:
-            continue
-        body = [line]
-        status = None
-        while time.monotonic() < deadline:
-            nxt = mon.stdout.readline()
-            if not nxt:
-                break
-            body.append(nxt)
-            if status is None:
-                sm = re.search(r"uint32 (\d+)", nxt)
-                if sm:
-                    status = int(sm.group(1))
-            if nxt.rstrip() == "   ]":
-                return 2 if status is None else status, "".join(body)
-    die("timed out waiting for the screen picker", 124)
-
-
-def pick_restore_token():
-    token = "oa" + uuid.uuid4().hex[:10]
-    mon = start_portal_monitor()
-    try:
-        create = gdbus_call(
-            PATH, "org.freedesktop.portal.ScreenCast.CreateSession",
-            "{'session_handle_token': <%s>, 'handle_token': <%s>}" % (repr(token), repr(token + "r")),
-        )
-        status, body = wait_portal_response(mon, parse_object_path(create), 20)
-        if status != 0:
-            die("screen capture session was rejected", 1)
-        sm = re.search(r'string "(/org/freedesktop/portal/desktop/session/[^"]+)"', body)
-        if not sm:
-            die("portal session handle missing")
-        session = sm.group(1)
-        select = gdbus_call(
-            PATH, "org.freedesktop.portal.ScreenCast.SelectSources", session,
-            "{'types': <uint32 3>, 'multiple': <false>, 'cursor_mode': <uint32 2>, 'persist_mode': <uint32 2>, 'handle_token': <%s>}" % repr(token + "s"),
-        )
-        status, body = wait_portal_response(mon, parse_object_path(select), 120)
-        if status != 0:
-            die("screen or window selection cancelled", 1)
-        start = gdbus_call(
-            PATH, "org.freedesktop.portal.ScreenCast.Start", session, "",
-            "{'handle_token': <%s>}" % repr(token + "t"),
-        )
-        status, body = wait_portal_response(mon, parse_object_path(start), 120)
-        if status != 0:
-            die("screen capture start was cancelled", 1)
-        tm = re.search(r'string "restore_token"\s+variant\s+string "([^"]+)"', body)
-        if not tm:
-            tm = re.search(r'restore_token"[^"]*"([^"]+)"', body)
-        if not tm:
-            die("portal did not return a restore token")
-        try:
-            gdbus_call(session, "org.freedesktop.portal.Session.Close")
-        except subprocess.CalledProcessError:
-            pass
-        return tm.group(1)
-    finally:
-        mon.send_signal(signal.SIGTERM)
-        try:
-            mon.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            mon.kill()
-
-
-def save_restore_token(device_id):
-    print("Choose a screen, window, or region…", file=sys.stderr)
-    run([CTL, "clear-restore", device_id], timeout=5)
-    restore = pick_restore_token()
-    run([CTL, "set-restore", device_id, restore], timeout=5)
-    return restore
-
-
-def pick_source(args):
-    os.makedirs(STATE, mode=0o700, exist_ok=True)
-    save_restore_token(args.device_id)
-    print("Capture source saved.", file=sys.stderr)
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if p.returncode:
+        detail = (p.stderr or p.stdout or "").strip() or ("exit %s" % p.returncode)
+        die(detail, p.returncode)
+    return p
 
 
 def start(args):
@@ -127,12 +25,16 @@ def start(args):
     if args.device_id:
         try:
             n = int(run([CTL, "reap", args.target], timeout=5).stdout.strip() or "0")
-        except (subprocess.CalledProcessError, ValueError):
+        except (subprocess.CalledProcessError, ValueError, SystemExit):
             n = 0
         if n:
             time.sleep(4)
+        # Forget the last capture so DoubleTake always opens the Hyprland picker.
         if args.prompt_capture:
-            save_restore_token(args.device_id)
+            try:
+                run([CTL, "clear-restore", args.device_id], timeout=5)
+            except SystemExit:
+                pass
     cmd = [args.doubletake, "-target", args.target, "-port-range", args.port_range,
            "-video-codec", args.video_codec, "-hwaccel", args.hwaccel,
            "-fps", str(args.fps), "-target-latency-ms", str(args.latency)]
@@ -159,8 +61,8 @@ def start(args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("command", choices=["start", "pick-source"])
-    p.add_argument("--target", default="")
+    p.add_argument("command", choices=["start"])
+    p.add_argument("--target", required=True)
     p.add_argument("--device-id", default="")
     p.add_argument("--doubletake", default="doubletake")
     p.add_argument("--port-range", default="60000-60010")
@@ -172,15 +74,10 @@ def main():
     p.add_argument("--prompt-capture", action="store_true")
     p.add_argument("--code", default="")
     args = p.parse_args()
-    if args.device_id and not re.fullmatch(r"[0-9A-Fa-f:]{2,64}", args.device_id):
-        die("invalid device id")
-    if args.command == "pick-source":
-        if not args.device_id:
-            die("device id required")
-        pick_source(args)
-        return
     if not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", args.target):
         die("invalid target")
+    if args.device_id and not re.fullmatch(r"[0-9A-Fa-f:]{2,64}", args.device_id):
+        die("invalid device id")
     if args.doubletake != "doubletake" and not re.fullmatch(r"/[A-Za-z0-9._/-]*/doubletake", args.doubletake):
         die("invalid doubletake path")
     if args.command == "start":

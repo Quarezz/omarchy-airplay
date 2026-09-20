@@ -22,14 +22,12 @@ BarWidget {
   property bool pairingRequired: false
   property bool pairingPromptActive: false
   property bool discoveryEnabled: false
-  property bool pickingSource: false
   property string discoveryError: ""
   property string streamError: ""
   property string firewallError: ""
   property bool firewallManaged: false
   property string forgettingAddress: ""
   property bool deliberateStop: false
-  property bool restartAfterPick: false
   property string queuedPairCode: ""
   property string pendingStartPairCode: ""
   property bool pairingAttemptInFlight: false
@@ -40,7 +38,7 @@ BarWidget {
   readonly property var mirroredProperties: [
     "bar", "settings", "receivers", "selectedName", "selectedAddress",
     "selectedDeviceId", "receiverAvailable", "pairingRequired", "pairingPromptActive",
-    "discoveryEnabled", "pickingSource", "discoveryError", "streamError", "mirroring"
+    "discoveryEnabled", "discoveryError", "streamError", "mirroring"
   ]
 
   function boolSetting(key, fallback) {
@@ -238,8 +236,8 @@ BarWidget {
     var command = [root.sessionPath, "start", "--target", root.selectedAddress, "--doubletake", executable,
       "--port-range", portRange, "--video-codec", codec, "--hwaccel", encoder, "--fps", String(fps), "--latency", String(latency)]
     if (root.selectedDeviceId !== "") command.push("--device-id", root.selectedDeviceId)
-    if (root.boolSetting("audio", false)) command.push("--audio")
-    if (root.boolSetting("alwaysPromptForCapture", false)) command.push("--prompt-capture")
+    if (root.boolSetting("audio", true)) command.push("--audio")
+    command.push("--prompt-capture")
     if (pairCode !== "") command.push("--code", pairCode)
     return command
   }
@@ -258,7 +256,7 @@ BarWidget {
 
   function start(pairCode) {
     if (root.mirroring) return "already-running"
-    if (clearRestoreProcess.running || reapProcess.running || startDelayTimer.running || pickSourceProcess.running) return "preparing-capture"
+    if (clearRestoreProcess.running || reapProcess.running || startDelayTimer.running) return "preparing-capture"
     if (root.selectedAddress === "") {
       root.open()
       return "no-receiver"
@@ -268,29 +266,9 @@ BarWidget {
     return root.launchStream(root.pendingStartPairCode)
   }
 
-  function chooseSource() {
-    if (pickSourceProcess.running) return "picking"
-    if (root.selectedDeviceId === "") {
-      root.streamError = root.t("chooseReceiver")
-      root.injectPanel()
-      return "no-receiver"
-    }
-    if (!/^\/[A-Za-z0-9._/-]*\/omarchy-airplay-session$/.test(root.sessionPath)) {
-      root.streamError = root.t("invalidSettings")
-      root.injectPanel()
-      return "invalid-settings"
-    }
-    root.streamError = ""
-    root.pickingSource = true
-    pickSourceProcess.command = [root.sessionPath, "pick-source", "--device-id", root.selectedDeviceId]
-    pickSourceProcess.running = true
-    root.injectPanel()
-    return "picking"
-  }
-
   function stop(silent) {
     root.deliberateStop = true
-    if (!root.restartAfterPick) startDelayTimer.stop()
+    startDelayTimer.stop()
     if (root.mirroring) mirrorProcess.running = false
     if (root.selectedAddress !== "") {
       reapProcess.command = [root.ctlPath, "reap", root.selectedAddress]
@@ -338,7 +316,7 @@ BarWidget {
     firewallLookupForForgetProcess.running = false; firewallRemoveProcess.running = false
     saveProcess.running = false; clearProcess.running = false; clearRestoreProcess.running = false
     pairingCheckProcess.running = false; forgetProcess.running = false; discoverProcess.running = false
-    pairedListProcess.running = false; rememberProcess.running = false; pickSourceProcess.running = false
+    pairedListProcess.running = false; rememberProcess.running = false
     reapProcess.running = false
     // Leave a live mirror running across plugin reloads. Stop() reaps leftovers.
   }
@@ -487,26 +465,6 @@ BarWidget {
   }
 
   Process {
-    id: pickSourceProcess
-    property string errText: ""
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: pickSourceProcess.errText = text }
-    onExited: function(code) {
-      root.pickingSource = false
-      if (code === 0) {
-        if (root.mirroring) {
-          root.restartAfterPick = true
-          root.stop(true)
-        }
-      } else {
-        root.streamError = root.humanStreamError(pickSourceProcess.errText, code)
-        root.notify(root.t("connectionFailedTitle"), root.streamError)
-      }
-      pickSourceProcess.errText = ""
-      root.injectPanel()
-    }
-  }
-
-  Process {
     id: pairingCheckProcess
     onExited: function(code) {
       root.pairingRequired = code !== 0
@@ -567,10 +525,7 @@ BarWidget {
     onExited: function(code) {
       var wasDeliberate = root.deliberateStop
       root.deliberateStop = false
-      if (root.restartAfterPick) {
-        root.restartAfterPick = false
-        startDelayTimer.restart()
-      } else if (root.queuedPairCode !== "") {
+      if (root.queuedPairCode !== "") {
         var codeToUse = root.queuedPairCode
         root.queuedPairCode = ""
         Qt.callLater(function() { root.start(codeToUse) })
@@ -617,7 +572,6 @@ BarWidget {
     function stop(): string { return root.stop() }
     function toggle(): string { return root.toggleStream() }
     function pair(code: string): string { return root.pair(code) }
-    function pickSource(): string { return root.chooseSource() }
     function status(): string {
       if (root.mirroring) return "mirroring " + root.selectedName + " (" + root.selectedAddress + ")"
       if (root.selectedAddress !== "") return "stopped; selected " + root.selectedName + " (" + root.selectedAddress + ")"

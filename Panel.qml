@@ -21,7 +21,6 @@ Panel {
   property bool pairingRequired: false
   property bool pairingPromptActive: false
   property bool discoveryEnabled: false
-  property bool pickingSource: false
   property string discoveryError: ""
   property string streamError: ""
   property bool mirroring: false
@@ -35,7 +34,6 @@ Panel {
 
   function heroMeta() {
     if (root.mirroring) return root.t("mirroringTo", { name: root.selectedName })
-    if (root.pickingSource) return root.t("chooseCapture")
     if (root.selectedAddress !== "") return root.t("readyFor", { name: root.selectedName })
     return root.t("chooseReceiver")
   }
@@ -159,17 +157,18 @@ Panel {
               id: receiverRow
               required property var modelData
               readonly property bool selected: modelData.address === root.selectedAddress
+              readonly property bool streaming: root.mirroring && selected
               readonly property bool paired: modelData.paired === true
-              readonly property bool hovered: rowClick.containsMouse
+              readonly property bool hovered: rowHover.containsMouse
 
               width: contentColumn.width
               implicitHeight: receiverContent.implicitHeight + Style.spacing.lg * 2
               radius: Style.cornerRadius
-              color: selected
+              color: streaming
                 ? Style.hoverFillFor(Color.accent, root.foreground)
                 : (hovered ? Style.hoverFillFor(root.foreground, root.foreground) : "transparent")
-              border.width: selected ? 1 : 0
-              border.color: selected ? Color.accent : "transparent"
+              border.width: streaming ? 1 : 0
+              border.color: streaming ? Color.accent : "transparent"
 
               Item {
                 id: receiverContent
@@ -222,18 +221,13 @@ Panel {
                 }
 
                 MouseArea {
-                  id: rowClick
+                  id: rowHover
                   anchors.left: parent.left
                   anchors.right: actionRow.left
                   anchors.top: parent.top
                   anchors.bottom: parent.bottom
                   hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: {
-                    if (!root.hostWidget) return
-                    if (receiverRow.selected) root.hostWidget.clearSelection()
-                    else root.hostWidget.selectReceiver(receiverRow.modelData.name, receiverRow.modelData.address, receiverRow.modelData.deviceId)
-                  }
+                  acceptedButtons: Qt.NoButton
                 }
 
                 Row {
@@ -241,16 +235,6 @@ Panel {
                   spacing: Style.spacing.xs
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
-
-                  PanelActionButton {
-                    iconText: "󰍹"
-                    tooltipText: root.t("chooseSourceTooltip")
-                    foreground: root.foreground
-                    hoverColor: Color.accent
-                    visible: receiverRow.selected && receiverRow.modelData.deviceId !== ""
-                    fontFamily: root.fontFamily
-                    onClicked: if (root.hostWidget) root.hostWidget.chooseSource()
-                  }
 
                   PanelActionButton {
                     iconText: root.mirroring && receiverRow.selected ? "󰓛" : "󰐨"

@@ -125,9 +125,8 @@ Click the AirPlay icon in the bar to open or close the receiver list. Discovery
 is off by default, so only paired receivers are listed. Turn **Discovery** on
 to scan the network and add a new TV.
 
-Click a receiver row to select it; click that row again to clear the selection.
-Use the monitor icon to choose a screen or window. Use the screen icon to start
-or stop mirroring. Start does not open the picker again.
+The receiver being mirrored is highlighted. Start always opens the Hyprland
+share picker, then connects.
 
 For a new receiver, turn Discovery on, select it, and press Start once. Enter
 the PIN shown by the receiver, then choose **Pair & connect**. DoubleTake
@@ -137,9 +136,6 @@ The PIN field is only shown after a connection has been attempted.
 The trash icon is shown only for paired receivers. It removes that receiver's
 saved DoubleTake credential, so the next connection must pair again. It does
 not change the receiver itself.
-
-While mirroring, the monitor button still opens the picker first, then
-reconnects with the new source so the TV does not sit on an AirPlay splash.
 
 ## Configure
 
@@ -157,7 +153,6 @@ Useful IPC calls:
 omarchy-shell io.github.etroll.omarchy-airplay status
 omarchy-shell io.github.etroll.omarchy-airplay toggle
 omarchy-shell io.github.etroll.omarchy-airplay discover
-omarchy-shell io.github.etroll.omarchy-airplay pickSource
 omarchy-shell io.github.etroll.omarchy-airplay select "Living Room" 192.168.1.50 AA:BB:CC:DD:EE:FF
 omarchy-shell io.github.etroll.omarchy-airplay unselect
 ```
